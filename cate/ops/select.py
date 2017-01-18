@@ -29,9 +29,12 @@ Components
 ==========
 """
 
+import geopandas as gpd
 import xarray as xr
 from typing import Union, List
 import fnmatch
+
+from toolz.itertoolz import drop
 
 from cate.core.op import op
 from cate.core.util import to_list
@@ -65,3 +68,20 @@ def select_var(ds: xr.Dataset, var: str = None) -> xr.Dataset:
             dropped_var_names.remove(name)
 
     return ds.drop(dropped_var_names)
+
+
+@op(tags=['select', 'filter', 'var'])
+def select_features(df: gpd.GeoDataFrame, var: dict = None) -> gpd.GeoDataFrame:
+    """
+    Filter the dataframe, by leaving only the desired features in it. The original dataframe
+    information, including original features, is preserved.
+
+    :param df: The dataframe from which to perform selection.
+    :param var: One or more feature names to select and preserve in the dataframe.
+    :return: A filtered dataframe
+    """
+
+    if not var:
+        return df
+
+    return df.query(' | '.join(['%s == "%s"' % (key, value) for (key, value) in var.items()]))

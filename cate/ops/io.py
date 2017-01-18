@@ -23,6 +23,7 @@ import json
 import os.path
 from abc import ABCMeta
 
+import geopandas as gpd
 import xarray as xr
 from cate.core.monitor import Monitor
 from cate.core.objectio import OBJECT_IO_REGISTRY, ObjectIO
@@ -207,6 +208,19 @@ def read_netcdf(file: str, drop_variables: str = None, decode_cf: bool = True, d
                            decode_cf=decode_cf, decode_times=decode_times, engine=engine)
 
 
+@op(tags=['input'])
+@op_input('file')
+def read_shapefile(file: str) -> gpd.GeoDataFrame:
+    """
+    Returns a GeoDataFrame from a file.
+
+    :param file: Is either the absolute or relative path to the file to be
+    opened
+    :return: A GeoDataFrame
+    """
+    return gpd.read_file(file, mode="r", driver="ESRI Shapefile")
+
+
 @op(tags=['output'], no_cache=True)
 @op_input('obj')
 @op_input('file')
@@ -220,6 +234,24 @@ def write_netcdf3(obj: xr.Dataset, file: str, engine: str = None):
     :param engine: Optional netCDF engine to be used
     """
     obj.to_netcdf(file, format='NETCDF3_64BIT', engine=engine)
+
+
+
+
+@op(tags=['output'], no_cache=True)
+@op_input('obj')
+@op_input('file')
+@op_input('engine')
+def write_netcdf4(obj: xr.Dataset, file: str, engine: str = None):
+    """
+    Write a data object to a netCDF 4 file. Note that the data object must be netCDF-serializable.
+
+    :param obj: A netCDF-serializable data object.
+    :param file: The netCDF file path.
+    :param engine: Optional netCDF engine to be used
+    """
+    obj.to_netcdf(file, format='NETCDF4', engine=engine)
+
 
 
 @op(tags=['output'], no_cache=True)
