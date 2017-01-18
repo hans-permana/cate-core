@@ -59,9 +59,9 @@ setup(
                       'numpy >= 1.7',
                       'scipy >= 0.17',
                       'pillow >= 3.4',
-                      'pandas >= 0.18',
+#                      'pandas >= 0.18',
                       'basemap >= 1.0',
                       'jdcal >= 1.3',
-#                      'geopandas >= 0.2.1',
+                      'geopandas >= 0.2.1',
                       ],
 )

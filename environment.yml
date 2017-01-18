@@ -20,6 +20,5 @@ dependencies:
   - sphinx-argparse
   - libgdal=2.0.0-2
   - geopandas=0.2.1=py35_3
-
   - pip:
     - sphinx_autodoc_annotation
