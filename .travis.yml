@@ -20,7 +20,7 @@ install:
   # Useful for debugging any issues with conda
   - conda info -a
 
-  - conda env create -q -n test-environment python=$TRAVIS_PYTHON_VERSION pytest pytest-cov --file environment.yml
+  - conda env create -q -n test-environment python=$TRAVIS_PYTHON_VERSION --file environment.yml
   - source activate test-environment
   # conda install -c defaults -c conda-forge pyqt matplotlib xarray dask numpy scipy numba netcdf4 basemap cartopy jdcal libgdal=2.1.0 geopandas
   - python setup.py install
