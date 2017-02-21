@@ -74,7 +74,7 @@ class WorkspaceManagerTestMixin:
 
         self.assertEqual(workspace2.base_dir, workspace1.base_dir)
         self.assertEqual(workspace2.workflow.id, workspace1.workflow.id)
-        sst_step = workspace2.workflow.find_node('SST')
+        sst_step = workspace2.workflow.find_node_by_name('SST')
         self.assertIsNotNone(sst_step)
 
         self.del_base_dir(base_dir)
@@ -93,7 +93,7 @@ class WorkspaceManagerTestMixin:
 
         self.assertEqual(workspace2.base_dir, workspace1.base_dir)
         self.assertEqual(workspace2.workflow.id, workspace1.workflow.id)
-        sst_step = workspace2.workflow.find_node('SST')
+        sst_step = workspace2.workflow.find_node_by_name('SST')
         self.assertIsNotNone(sst_step)
 
         workspace_manager.clean_workspace(base_dir)

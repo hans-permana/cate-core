@@ -234,6 +234,19 @@ class ResourceSetHandler(WebAPIRequestHandler):
 
 
 # noinspection PyAbstractClass
+class ResourceRenameHandler(WebAPIRequestHandler):
+    def get(self, base_dir, res_name):
+        res_name_new = self.get_query_argument('res_name_new')
+        workspace_manager = self.application.workspace_manager
+        try:
+            with cwd(base_dir):
+                workspace = workspace_manager.rename_workspace_resource(base_dir, res_name, res_name_new)
+            self.write_status_ok(content=workspace.to_json_dict())
+        except Exception as e:
+            self.write_status_error(exception=e)
+
+
+# noinspection PyAbstractClass
 class ResourceWriteHandler(WebAPIRequestHandler):
     def get(self, base_dir, res_name):
         file_path = self.get_query_argument('file_path')

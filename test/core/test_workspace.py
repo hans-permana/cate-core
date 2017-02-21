@@ -40,7 +40,7 @@ class WorkspaceTest(unittest.TestCase):
 
     def test_example(self):
         expected_json_text = """{
-            "qualified_name": "workspace_workflow",
+            "id": "workspace_workflow",
             "header": {
                 "description": "Test!"
             },

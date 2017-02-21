@@ -35,12 +35,12 @@ import numpy as np
 import xarray as xr
 
 from cate.conf.defaults import WORKSPACE_DATA_DIR_NAME, WORKSPACE_WORKFLOW_FILE_NAME, SCRATCH_WORKSPACES_PATH
+from cate.core.cdm import get_lon_dim_name, get_lat_dim_name
 from cate.core.op import OP_REGISTRY, parse_op_args
-from cate.util.opmetainf import OpMetaInfo
 from cate.core.workflow import Workflow, OpStep, NodePort, ValueCache
 from cate.util import Monitor, Namespace, object_to_qualified_name
-from cate.core.cdm import get_lon_dim_name, get_lat_dim_name
 from cate.util.im import ImagePyramid, get_chunk_size
+from cate.util.opmetainf import OpMetaInfo
 
 
 class Workspace:
@@ -119,7 +119,7 @@ class Workspace:
     @classmethod
     def open(cls, base_dir: str) -> 'Workspace':
         if not os.path.isdir(cls.get_workspace_dir(base_dir)):
-            raise WorkspaceError('not a valid workspace: %s' % base_dir)
+            raise WorkspaceError('Not a valid workspace: %s' % base_dir)
         try:
             workflow_file = cls.get_workflow_file(base_dir)
             workflow = Workflow.load(workflow_file)
@@ -166,30 +166,25 @@ class Workspace:
 
     def _resources_to_json_dict(self):
         resources_json = []
-        for resource_name in self._resource_cache:
-            resource = self._resource_cache[resource_name]
+        for step_id in self._resource_cache:
+            res_step = self._workflow.find_node_by_id(step_id)
+            resource = self._resource_cache[step_id]
+            variable_descriptors = []
             if isinstance(resource, xr.Dataset):
-                variable_infos = []
-                for variable in resource.data_vars:
-                    variable_infos.append(self._get_variable_info(resource.data_vars[variable]))
-                resource_info = {
-                    'name': resource_name,
-                    'dataType': object_to_qualified_name(type(resource)),
-                    'variables': variable_infos,
-                }
-                resources_json.append(resource_info)
-            else:
-                resource_info = {
-                    'name': resource_name,
-                    'dataType': object_to_qualified_name(type(resource)),
-                    'variables': [],
-                }
-                resources_json.append(resource_info)
+                data_vars = resource.data_vars
+                for var_name in data_vars:
+                    variable_descriptors.append(self._get_variable_descriptor(data_vars[var_name]))
+            resource_info = {
+                'id': res_step.id,
+                'name': res_step.name,
+                'dataType': object_to_qualified_name(type(resource)),
+                'variables': variable_descriptors,
+            }
+            resources_json.append(resource_info)
 
         return resources_json
 
-    def _get_variable_info(self, variable: xr.DataArray):
-        # See http://docs.h5py.org/en/latest/
+    def _get_variable_descriptor(self, variable: xr.DataArray):
         # print(list(variable.attrs.keys()))
         attrs = variable.attrs
         variable_info = {
@@ -212,7 +207,7 @@ class Workspace:
         image_config = self._get_variable_image_config(variable)
         if image_config:
             variable_info['imageLayout'] = image_config
-            variable_info['y_flipped'] = self._is_y_flipped(variable)
+            variable_info['y_flipped'] = Workspace._is_y_flipped(variable)
         return variable_info
 
     # noinspection PyMethodMayBeStatic
@@ -261,7 +256,8 @@ class Workspace:
             'tileHeight': tile_size[1]
         }
 
-    def _is_y_flipped(self, variable):
+    @staticmethod
+    def _is_y_flipped(variable):
         lat_coords = variable.coords[get_lat_dim_name(variable)]
         return lat_coords.to_index().is_monotonic_increasing
 
@@ -296,9 +292,9 @@ class Workspace:
             raise WorkspaceError(e)
 
     def delete_resource(self, res_name: str):
-        res_step = self.workflow.find_node(res_name)
+        res_step = self.workflow.find_node_by_name(res_name)
         if res_step is None:
-            raise WorkspaceError('Resource not found: %s' % res_name)
+            raise WorkspaceError('Resource "%s" not found' % res_name)
 
         dependent_steps = []
         for step in self.workflow.steps:
@@ -306,31 +302,25 @@ class Workspace:
                 dependent_steps.append(res_step.id)
 
         if dependent_steps:
-            raise WorkspaceError("Cannot delete resource '%s' because the following resource "
-                                 "depend on it: %s" % (res_step, ', '.join(dependent_steps)))
+            raise WorkspaceError('Cannot delete resource "%s" because the following resource '
+                                 'depend on it: %s' % (res_step, ', '.join(dependent_steps)))
 
         self.workflow.remove_step(res_step)
         if res_name in self._resource_cache:
             del self._resource_cache[res_name]
 
-    def execute_workflow(self, res_name: str = None, monitor: Monitor = Monitor.NONE):
-        self._assert_open()
-        steps = self.workflow.steps if not res_name else self.workflow.find_steps_to_compute(res_name)
-        Workflow.invoke_steps(steps, value_cache=self._resource_cache, monitor=monitor)
-        return steps[-1].get_output_value()
-
-    def run_op(self, op_name: str, op_args: List[str], validate_args=False, monitor=Monitor.NONE):
-        assert op_name
-        assert op_args
-
-        op = OP_REGISTRY.get_op(op_name)
-        if not op:
-            raise WorkspaceError("unknown operation '%s'" % op_name)
-
-        with monitor.starting("Running operation '%s'" % op_name, 2):
-            self.workflow.invoke(self.resource_cache, monitor=monitor.child(work=1))
-            op_kwargs = self._parse_op_args(op, op_args, self.resource_cache, validate_args)
-            op(monitor=monitor.child(work=1), **op_kwargs)
+    def rename_resource(self, res_name: str, res_name_new: str):
+        res_step = self.workflow.find_node_by_name(res_name)
+        if res_step is None:
+            raise WorkspaceError('Resource "%s" not found' % res_name)
+        res_step_new = self.workflow.find_node_by_name(res_name_new)
+        if res_step_new is res_step:
+            # No-op
+            return
+        if res_step_new is not None:
+            raise WorkspaceError('Resource "%s" cannot be renamed to "%s", '
+                                 'because "%s" is already in use.' % (res_name, res_name_new, res_name_new))
+        res_step.name = res_name_new
 
     def set_resource(self, res_name: str, op_name: str, op_args: List[str], overwrite=False, validate_args=False):
         assert res_name
@@ -339,9 +329,9 @@ class Workspace:
 
         op = OP_REGISTRY.get_op(op_name)
         if not op:
-            raise WorkspaceError("unknown operation '%s'" % op_name)
+            raise WorkspaceError('Unknown operation "%s"' % op_name)
 
-        op_step = OpStep(op, node_id=res_name)
+        op_step = OpStep(op, node_id=res_name, node_name=res_name)
 
         workflow = self.workflow
 
@@ -355,7 +345,7 @@ class Workspace:
 
         does_exist = res_name in namespace
         if not overwrite and does_exist:
-            raise WorkspaceError("resource '%s' already exists" % res_name)
+            raise WorkspaceError('Resource "%s" already exists' % res_name)
 
         if does_exist:
             # Prevent resource from self-referencing
@@ -368,7 +358,7 @@ class Workspace:
         # Wire new op_step with outputs from existing steps
         for input_name, input_value in op_kwargs.items():
             if input_name not in op_step.input:
-                raise WorkspaceError("'%s' is not an input of operation '%s'" % (input_name, op_name))
+                raise WorkspaceError('"%s" is not an input of operation "%s"' % (input_name, op_name))
             input_port = op_step.input[input_name]
             if isinstance(input_value, NodePort):
                 # input_value is an output NodePort of another step
@@ -376,13 +366,13 @@ class Workspace:
             elif isinstance(input_value, Namespace):
                 # input_value is output_namespace of another step
                 if return_output_name not in input_value:
-                    raise WorkspaceError("illegal value for input '%s'" % input_name)
+                    raise WorkspaceError('Illegal value for input "%s"' % input_name)
                 input_port.source = input_value['return']
             else:
                 # Neither a Namespace nor a NodePort, it must be a constant value
                 input_port.value = input_value
 
-        old_step = workflow.find_node(res_name)
+        old_step = workflow.find_node_by_name(res_name)
 
         # Collect keys of invalidated cache entries, initialize with res_name
         ids_of_invalidated_steps = {res_name}
@@ -417,6 +407,31 @@ class Workspace:
                 #     workflow_output_port.source = op_step.output[return_output_name]
                 #     workflow.output[workflow_output_port.name] = workflow_output_port
 
+    def run_op(self, op_name: str, op_args: List[str], validate_args=False, monitor=Monitor.NONE):
+        assert op_name
+        assert op_args
+
+        op = OP_REGISTRY.get_op(op_name)
+        if not op:
+            raise WorkspaceError('Unknown operation "%s"' % op_name)
+
+        with monitor.starting("Running operation '%s'" % op_name, 2):
+            self.workflow.invoke(self.resource_cache, monitor=monitor.child(work=1))
+            op_kwargs = self._parse_op_args(op, op_args, self.resource_cache, validate_args)
+            op(monitor=monitor.child(work=1), **op_kwargs)
+
+    def execute_workflow(self, res_name: str = None, monitor: Monitor = Monitor.NONE):
+        self._assert_open()
+        if not res_name:
+            steps = self.workflow.steps
+        else:
+            res_step = self.workflow.find_node_by_name(res_name)
+            if res_step is None:
+                raise WorkspaceError('Resource "%s" not found' % res_name)
+            steps = self.workflow.find_steps_to_compute(res_step.id)
+        Workflow.invoke_steps(steps, value_cache=self._resource_cache, monitor=monitor)
+        return steps[-1].get_output_value()
+
     # noinspection PyMethodMayBeStatic
     def _parse_op_args(self, op, raw_op_args, namespace: dict, validate_args: bool):
         try:
@@ -425,7 +440,7 @@ class Workspace:
         except ValueError as e:
             raise WorkspaceError(e)
         if op_args:
-            raise WorkspaceError("positional arguments are not yet supported")
+            raise WorkspaceError("Positional arguments are not yet supported")
         if validate_args:
             # validate the op_kwargs using the operation's meta-info
             namespace_types = set(type(value) for value in namespace.values())
@@ -434,7 +449,7 @@ class Workspace:
 
     def _assert_open(self):
         if self._is_closed:
-            raise WorkspaceError('already closed: ' + self._base_dir)
+            raise WorkspaceError('Workspace is already closed: ' + self._base_dir)
 
 
 class WorkspaceError(Exception):

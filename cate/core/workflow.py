@@ -115,6 +115,7 @@ Components
 ==========
 """
 
+import json
 from abc import ABCMeta, abstractmethod
 from collections import OrderedDict
 from io import IOBase
@@ -123,8 +124,8 @@ from typing import Sequence, Optional, Union, List, Dict
 
 from cate.util import Namespace, UNDEFINED
 from cate.util.monitor import Monitor
-from .op import OP_REGISTRY, OpRegistration
 from cate.util.opmetainf import OpMetaInfo
+from .op import OP_REGISTRY, OpRegistration
 from .workflow_svg import Drawing as _Drawing
 from .workflow_svg import Graph as _Graph
 from .workflow_svg import Node as _Node
@@ -140,18 +141,19 @@ class Node(metaclass=ABCMeta):
     are both of type :py:class:`NodePort`.
 
     :param op_meta_info: Meta-information about the operation, see :py:class:`OpMetaInfo`.
-    :param node_id: A node ID. If None, a unique name will be generated.
+    :param node_id: The node's unique identifier. If not given, a unique identifier will be generated.
+    :param node_name: The node's display name.
     """
 
     def __init__(self,
                  op_meta_info: OpMetaInfo,
-                 node_id: str):
+                 node_id: str = None,
+                 node_name: str = None):
         if not op_meta_info:
             raise ValueError('op_meta_info must be given')
-        if not node_id:
-            raise ValueError('node_id must be given')
         self._op_meta_info = op_meta_info
-        self._id = node_id
+        self._id = node_id or _gen_id(self)
+        self._name = node_name or self._id
         self._input = self._new_input_namespace()
         self._output = self._new_output_namespace()
 
@@ -162,8 +164,18 @@ class Node(metaclass=ABCMeta):
 
     @property
     def id(self) -> str:
-        """The node's operation meta-information."""
+        """The node's unique identifier."""
         return self._id
+
+    @property
+    def name(self) -> str:
+        """The node's display name."""
+        return self._name
+
+    @name.setter
+    def name(self, name: str) -> None:
+        """Set the node's display name."""
+        self._name = name
 
     @property
     def input(self) -> Namespace:
@@ -188,8 +200,12 @@ class Node(metaclass=ABCMeta):
         """The node's parent node or ``None`` if this node has no parent."""
         return None
 
-    def find_node(self, node_id) -> Optional['Node']:
+    def find_node_by_id(self, step_id: str) -> Optional['Node']:
         """Find a (child) node with the given *node_id*."""
+        return None
+
+    def find_node_by_name(self, node_name) -> Optional['Node']:
+        """Find a (child) node with the given *node_name*."""
         return None
 
     def requires(self, other_node: 'Node') -> bool:
@@ -355,11 +371,12 @@ class Node(metaclass=ABCMeta):
         if op_meta_info.has_named_outputs:
             output_assignments = self._format_port_assignments(self.output, False)
             output_assignments = ' -> (%s)' % output_assignments
-        return '%s = %s(%s)%s [%s]' % (self.id, body_string, input_assignments, output_assignments, type(self).__name__)
+        return '%s = %s(%s)%s [%s]' % (
+            self.name, body_string, input_assignments, output_assignments, type(self).__name__)
 
-    @abstractmethod
     def __repr__(self):
         """String representation for developers."""
+        return json.dumps(self.to_json_dict(), indent=2)
 
     def _new_input_namespace(self):
         return self._new_namespace(self.op_meta_info.input.keys())
@@ -375,15 +392,15 @@ class Workflow(Node):
     """
     A workflow of (connected) steps.
 
-    :param name_or_op_meta_info: Qualified operation name or meta-information object of type :py:class:`OpMetaInfo`.
+    :param op_meta_info: Operation meta-information object of type :py:class:`OpMetaInfo`.
+    :param node_id: The workflow's unique identifier. If not given, a unique identifier will be generated.
+    :param node_name: The workflow's display name.
     """
 
-    def __init__(self, name_or_op_meta_info: Union[str, OpMetaInfo]):
-        if isinstance(name_or_op_meta_info, str):
-            op_meta_info = OpMetaInfo(name_or_op_meta_info)
-        else:
-            op_meta_info = name_or_op_meta_info
-        super(Workflow, self).__init__(op_meta_info, op_meta_info.qualified_name)
+    def __init__(self, op_meta_info: OpMetaInfo, node_id: str = None, node_name: str = None):
+        super(Workflow, self).__init__(op_meta_info,
+                                       node_id=node_id or op_meta_info.qualified_name,
+                                       node_name=node_name or op_meta_info.qualified_name)
         self._steps = OrderedDict()
 
     @property
@@ -406,13 +423,26 @@ class Workflow(Node):
         step.collect_predecessors(steps, [self])
         return steps
 
-    def find_node(self, step_id: str) -> Optional['Step']:
+    def find_node_by_id(self, step_id: str) -> Optional['Step']:
         # is it the ID of one of the direct children?
         if step_id in self._steps:
             return self._steps[step_id]
         # is it the ID of one of the children of the children?
         for node in self._steps.values():
-            other_node = node.find_node(step_id)
+            other_node = node.find_node_by_id(step_id)
+            if other_node:
+                return other_node
+        return None
+
+    def find_node_by_name(self, step_name: str) -> Optional['Step']:
+        # fast lookup first:
+        if step_name in self._steps:
+            step = self._steps[step_name]
+            if step.name == step_name:
+                return step
+        # is it the name of one of the children of the children?
+        for node in self._steps.values():
+            other_node = node.find_node_by_name(step_name)
             if other_node:
                 return other_node
         return None
@@ -533,9 +563,13 @@ class Workflow(Node):
     def from_json_dict(cls, workflow_json_dict, registry=OP_REGISTRY) -> 'Workflow':
         # Developer note: keep variable naming consistent with Workflow.to_json_dict() method
 
-        qualified_name = workflow_json_dict.get('qualified_name', None)
-        if qualified_name is None:
-            raise ValueError('missing mandatory property "qualified_name" in Workflow-JSON')
+        node_id = workflow_json_dict.get('id', None)
+        qualified_name = workflow_json_dict.get('qualified_name', None) or node_id
+        node_name = workflow_json_dict.get('name', None) or qualified_name
+
+        if not qualified_name:
+            raise ValueError('missing "id" or "qualified_name" in Workflow-JSON')
+
         header_json_dict = workflow_json_dict.get('header', {})
         input_json_dict = workflow_json_dict.get('input', {})
         output_json_dict = workflow_json_dict.get('output', {})
@@ -564,7 +598,7 @@ class Workflow(Node):
             if node is None:
                 raise ValueError("unknown type for node #%s in workflow '%s'" % (step_count, qualified_name))
 
-        workflow = Workflow(op_meta_info)
+        workflow = Workflow(op_meta_info, node_id=node_id, node_name=node_name)
         workflow.add_steps(*steps)
 
         for node_input in workflow.input[:]:
@@ -609,17 +643,22 @@ class Workflow(Node):
         input_json_dict = OpMetaInfo.object_dict_to_json_dict(input_json_dict)
         output_json_dict = OpMetaInfo.object_dict_to_json_dict(output_json_dict)
 
+        node_id = self.id
+        node_name = self.name
+        qualified_name = self.op_meta_info.qualified_name
+
         workflow_json_dict = OrderedDict()
-        workflow_json_dict['qualified_name'] = self.op_meta_info.qualified_name
+        workflow_json_dict['id'] = node_id
+        if qualified_name != node_id:
+            workflow_json_dict['qualified_name'] = qualified_name
+        if node_name != qualified_name:
+            workflow_json_dict['name'] = node_name
         workflow_json_dict['header'] = header_json_dict
         workflow_json_dict['input'] = input_json_dict
         workflow_json_dict['output'] = output_json_dict
         workflow_json_dict['steps'] = steps_json_list
 
         return workflow_json_dict
-
-    def __repr__(self) -> str:
-        return "Workflow(%s)" % repr(self.op_meta_info.qualified_name)
 
     def _repr_svg_(self) -> str:
         """
@@ -636,11 +675,12 @@ class Step(Node):
     A step is an inner node of a workflow.
 
     :param op_meta_info: Meta-information about the operation, see :py:class:`OpMetaInfo`.
-    :param node_id: A node ID. If None, a unique name will be generated.
+    :param node_id: An optional step identifier. If not given, a unique identifier will be generated.
+    :param node_name: The step's display name.
     """
 
-    def __init__(self, op_meta_info: OpMetaInfo, node_id: str):
-        super(Step, self).__init__(op_meta_info, node_id)
+    def __init__(self, op_meta_info: OpMetaInfo, node_id: str = None, node_name: str = None):
+        super(Step, self).__init__(op_meta_info, node_id=node_id, node_name=node_name)
         self._parent_node = None
 
     @property
@@ -691,6 +731,9 @@ class Step(Node):
         node_dict = OrderedDict()
         node_dict['id'] = self.id
 
+        if self.name and self.name != self.id:
+            node_dict['name'] = self.name
+
         self.enhance_json_dict(node_dict)
 
         node_dict['input'] = OrderedDict(
@@ -710,17 +753,17 @@ class WorkflowStep(Step):
     A `WorkflowStep` is a step node that invokes an externally stored :py:class:`Workflow`.
 
     :param workflow: The referenced workflow.
-    :param resource: A resource (e.g. file path, URL) from which the workflow was loaded.
-    :param node_id: A node ID. If None, a unique ID will be generated.
+    :param resource: A resource path (e.g. file path, URL) from which the workflow was loaded.
+    :param node_id: The step's unique identifier. If not given, a unique identifier will be generated.
+    :param node_name: The step's display name.
     """
 
-    def __init__(self, workflow, resource, node_id=None):
+    def __init__(self, workflow: Workflow, resource: str, node_id=None, node_name=None):
         if not workflow:
             raise ValueError('workflow must be given')
         if not resource:
             raise ValueError('resource must be given')
-        node_id = node_id if node_id else 'workflow_step_' + hex(id(self))[2:]
-        super(WorkflowStep, self).__init__(workflow.op_meta_info, node_id)
+        super(WorkflowStep, self).__init__(workflow.op_meta_info, node_id=node_id, node_name=node_name)
         self._workflow = workflow
         self._resource = resource
         # Connect the workflow's inputs with this node's input sources
@@ -772,20 +815,18 @@ class WorkflowStep(Step):
     def enhance_json_dict(self, node_dict: OrderedDict):
         node_dict['workflow'] = self._resource
 
-    def __repr__(self):
-        return "WorkflowStep(%s, '%s', node_id='%s')" % (repr(self._workflow), self.resource, self.id)
-
 
 class OpStep(Step):
     """
     An `OpStep` is a step node that invokes a registered operation of type :py:class:`OpRegistration`.
 
     :param operation: A fully qualified operation name or operation object such as a class or callable.
+    :param node_id: The step's unique identifier. If not given, a unique identifier will be generated.
+    :param node_name: The step's display name.
     :param registry: An operation registry to be used to lookup the operation, if given by name.
-    :param node_id: A node ID. If None, a unique ID will be generated.
     """
 
-    def __init__(self, operation, node_id=None, registry=OP_REGISTRY):
+    def __init__(self, operation, node_id=None, node_name=None, registry=OP_REGISTRY):
         if not operation:
             raise ValueError('operation must be given')
         if isinstance(operation, str):
@@ -795,9 +836,8 @@ class OpStep(Step):
         else:
             op_registration = registry.get_op(operation, fail_if_not_exists=True)
         assert op_registration is not None
-        node_id = node_id if node_id else 'op_step_' + hex(id(self))[2:]
         op_meta_info = op_registration.op_meta_info
-        super(OpStep, self).__init__(op_meta_info, node_id)
+        super(OpStep, self).__init__(op_meta_info, node_id=node_id, node_name=node_name)
         self._op_registration = op_registration
 
     @property
@@ -858,9 +898,6 @@ class OpStep(Step):
     def enhance_json_dict(self, node_dict: OrderedDict):
         node_dict['op'] = self.op_meta_info.qualified_name
 
-    def __repr__(self):
-        return "OpStep(%s, node_id='%s')" % (self.op_meta_info.qualified_name, self.id)
-
 
 class ExprStep(Step):
     """
@@ -869,17 +906,18 @@ class ExprStep(Step):
     :param expression: A simple (Python) expression string.
     :param input_dict: input name to input properties mapping.
     :param output_dict: output name to output properties mapping.
-    :param node_id: A node ID. If None, a unique ID will be generated.
+    :param node_id: The step's unique identifier. If not given, a unique identifier will be generated.
+    :param node_name: The step's display name.
     """
 
-    def __init__(self, expression: str, input_dict=None, output_dict=None, node_id=None):
+    def __init__(self, expression: str, input_dict=None, output_dict=None, node_id=None, node_name=None):
         if not expression:
             raise ValueError('expression must be given')
-        node_id = node_id if node_id else 'expr_step_' + hex(id(self))[2:]
+        node_id = node_id or _gen_id(self)
         op_meta_info = OpMetaInfo(node_id, input_dict=input_dict, output_dict=output_dict)
         if len(op_meta_info.output) == 0:
             op_meta_info.output[op_meta_info.RETURN_OUTPUT_NAME] = {}
-        super(ExprStep, self).__init__(op_meta_info, node_id)
+        super(ExprStep, self).__init__(op_meta_info, node_id=node_id, node_name=node_name)
         self._expression = expression
 
     @property
@@ -927,9 +965,6 @@ class ExprStep(Step):
     def _body_string(self):
         return '"%s"' % self.expression
 
-    def __repr__(self):
-        return "ExprNode('%s', node_id='%s')" % (self.expression, self.id)
-
 
 class NoOpStep(Step):
     """
@@ -941,15 +976,16 @@ class NoOpStep(Step):
 
     :param input_dict: input name to input properties mapping.
     :param output_dict: output name to output properties mapping.
-    :param node_id: A node ID. If None, a unique ID will be generated.
+    :param node_id: The step's unique identifier. If not given, a unique identifier will be generated.
+    :param node_name: The step's display name.
     """
 
-    def __init__(self, input_dict=None, output_dict=None, node_id=None):
-        node_id = node_id if node_id else 'no_op_step_' + hex(id(self))[2:]
+    def __init__(self, input_dict=None, output_dict=None, node_id=None, node_name=None):
+        node_id = node_id or _gen_id(self)
         op_meta_info = OpMetaInfo(node_id, input_dict=input_dict, output_dict=output_dict)
         if len(op_meta_info.output) == 0:
             op_meta_info.output[op_meta_info.RETURN_OUTPUT_NAME] = {}
-        super(NoOpStep, self).__init__(op_meta_info, node_id)
+        super(NoOpStep, self).__init__(op_meta_info, node_id=node_id, node_name=node_name)
 
     def invoke(self, value_cache: dict = None, monitor: Monitor = Monitor.NONE):
         """
@@ -977,9 +1013,6 @@ class NoOpStep(Step):
     def _body_string(self):
         return 'noop'
 
-    def __repr__(self):
-        return "NoOpStep(node_id='%s')" % self.id
-
 
 class SubProcessStep(Step):
     """
@@ -990,7 +1023,8 @@ class SubProcessStep(Step):
            remaining entries are the executable's arguments.
     :param input_dict: input name to input properties mapping.
     :param output_dict: output name to output properties mapping.
-    :param node_id: A node ID. If None, a unique ID will be generated.
+    :param node_id: The step's unique identifier. If not given, a unique identifier will be generated.
+    :param node_name: The step's display name.
     """
 
     def __init__(self,
@@ -999,14 +1033,15 @@ class SubProcessStep(Step):
                  working_directory: str = '',
                  input_dict=None,
                  output_dict=None,
-                 node_id=None):
+                 node_id=None,
+                 node_name=None):
         if not sub_process_arguments:
             raise ValueError('sub_process_arguments must be given')
-        node_id = node_id if node_id else 'sub_process_step_' + hex(id(self))[2:]
+        node_id = node_id or _gen_id(self)
         op_meta_info = OpMetaInfo(node_id, input_dict=input_dict, output_dict=output_dict)
         if len(op_meta_info.output) == 0:
             op_meta_info.output[op_meta_info.RETURN_OUTPUT_NAME] = {}
-        super(SubProcessStep, self).__init__(op_meta_info, node_id)
+        super(SubProcessStep, self).__init__(op_meta_info, node_id=node_id, node_name=node_name)
         self._sub_process_arguments = sub_process_arguments
         # noinspection PyArgumentList
         self._environment_variables = dict(**environment_variables) if environment_variables else {}
@@ -1072,9 +1107,6 @@ class SubProcessStep(Step):
 
     def _body_string(self):
         return '"%s"' % ' '.join(self.sub_process_arguments)
-
-    def __repr__(self):
-        return "SubProcessStep(%s, node_id='%s')" % (repr(self._sub_process_arguments), self.id)
 
 
 class NodePort:
@@ -1160,9 +1192,13 @@ class NodePort:
         """
         if self._source_ref:
             other_node_id, other_name = self._source_ref
-            if other_node_id and other_name:
+
+            other_node = None
+            if other_node_id:
                 root_node = self._node.root_node
-                other_node = root_node if root_node.id == other_node_id else root_node.find_node(other_node_id)
+                other_node = root_node if root_node.id == other_node_id else root_node.find_node_by_id(other_node_id)
+
+            if other_node_id and other_name:
                 if other_node:
                     node_port = other_node.find_port(other_name)
                     if node_port:
@@ -1175,8 +1211,6 @@ class NodePort:
                     raise ValueError("cannot connect '%s' with '%s.%s' because node '%s' does not exist" % (
                         self, other_node_id, other_name, other_node_id))
             elif other_node_id:
-                root_node = self._node.root_node
-                other_node = root_node if root_node.id == other_node_id else root_node.find_node(other_node_id)
                 if other_node:
                     if len(other_node.output) == 1:
                         node_port = other_node.output[0]
@@ -1268,7 +1302,8 @@ class NodePort:
             return "%s.%s" % (self._node.id, self._name)
 
     def __repr__(self):
-        return "NodePort(%s, %s)" % (repr(self.node_id), repr(self.name))
+        """String representation for developers."""
+        return json.dumps(self.to_json_dict(), indent=2)
 
 
 def _convert_workflow_to_graph(workflow: Workflow):
@@ -1357,3 +1392,16 @@ class ValueCache(dict):
         self.clear()
         for value in values:
             _close_value(value)
+
+
+_HEX_CHARS = '0123456789abcdef'
+_N_HEX_CHARS = len(_HEX_CHARS)
+
+from random import randrange
+
+
+def _gen_id(obj, n=8):
+    s = obj.__class__.__name__ + '_'
+    for i in range(n):
+        s += _HEX_CHARS[randrange(0, _N_HEX_CHARS)]
+    return s

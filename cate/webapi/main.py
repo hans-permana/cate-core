@@ -60,7 +60,7 @@ from cate.webapi.rest import WorkspaceGetHandler, WorkspaceNewHandler, Workspace
     WorkspaceCloseHandler, WorkspaceGetOpenHandler, WorkspaceCleanHandler, \
     WorkspaceCloseAllHandler, WorkspaceDeleteHandler, WorkspaceRunOpHandler, \
     WorkspaceSaveAllHandler, WorkspaceSaveAsHandler, WorkspaceSaveHandler, \
-    ResourceSetHandler, ResourceDeleteHandler, ResourcePlotHandler, \
+    ResourceSetHandler, ResourceRenameHandler, ResourceDeleteHandler, ResourcePlotHandler, \
     ResourcePrintHandler, ResourceWriteHandler, \
     ResVarTileHandler, NE2Handler
 from cate.webapi.websocket import WebSocketService
@@ -112,6 +112,7 @@ def create_application():
         (url_pattern('/ws/clean/{{base_dir}}'), WorkspaceCleanHandler),
         (url_pattern('/ws/run_op/{{base_dir}}'), WorkspaceRunOpHandler),
         (url_pattern('/ws/res/set/{{base_dir}}/{{res_name}}'), ResourceSetHandler),
+        (url_pattern('/ws/res/rename/{{base_dir}}/{{res_name}}'), ResourceRenameHandler),
         (url_pattern('/ws/res/del/{{base_dir}}/{{res_name}}'), ResourceDeleteHandler),
         (url_pattern('/ws/res/write/{{base_dir}}/{{res_name}}'), ResourceWriteHandler),
         (url_pattern('/ws/res/plot/{{base_dir}}/{{res_name}}'), ResourcePlotHandler),

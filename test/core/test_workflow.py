@@ -4,9 +4,9 @@ from collections import OrderedDict
 from unittest import TestCase
 
 from cate.core.op import op_input, op_output, OpRegistration
-from cate.util.opmetainf import OpMetaInfo
 from cate.core.workflow import OpStep, Workflow, WorkflowStep, NodePort, ExprStep, NoOpStep, SubProcessStep
 from cate.util.misc import object_to_qualified_name
+from cate.util.opmetainf import OpMetaInfo
 
 
 @op_input('x')
@@ -99,7 +99,10 @@ class WorkflowTest(TestCase):
     def test_init(self):
         step1, step2, step3, workflow = self.create_example_3_steps_workflow()
 
+        # self.assertRegex(workflow.id, 'Workflow_[0-9a-f]{8}$')
+
         self.assertEqual(workflow.id, 'myWorkflow')
+        self.assertEqual(workflow.name, 'myWorkflow')
         self.assertEqual(len(workflow.input), 1)
         self.assertEqual(len(workflow.output), 1)
         self.assertIn('p', workflow.input)
@@ -113,8 +116,8 @@ class WorkflowTest(TestCase):
         self.assertIs(workflow.output.q.source, step3.output.w)
         self.assertIsNone(workflow.output.q.value)
 
-        self.assertEqual(str(workflow), workflow.id + ' = myWorkflow(p=None) -> (q=op3.w) [Workflow]')
-        self.assertEqual(repr(workflow), "Workflow('myWorkflow')")
+        self.assertEqual(str(workflow), workflow.name + ' = myWorkflow(p=None) -> (q=op3.w) [Workflow]')
+        self.assertTrue(('"id": "%s"' % workflow.id) in repr(workflow))
 
     def test_invoke(self):
         _, _, _, workflow = self.create_example_3_steps_workflow()
@@ -146,7 +149,7 @@ class WorkflowTest(TestCase):
     def test_from_json_dict(self):
         workflow_json_text = """
         {
-            "qualified_name": "my_workflow",
+            "id": "my_workflow",
             "header": {
                 "description": "My workflow is not too bad."
             },
@@ -187,8 +190,9 @@ class WorkflowTest(TestCase):
 
         self.assertIsNotNone(workflow)
         self.assertEqual(workflow.id, "my_workflow")
+        self.assertEqual(workflow.name, "my_workflow")
 
-        self.assertEqual(workflow.op_meta_info.qualified_name, workflow.id)
+        self.assertEqual(workflow.op_meta_info.qualified_name, "my_workflow")
         self.assertEqual(workflow.op_meta_info.header, dict(description="My workflow is not too bad."))
         self.assertEqual(len(workflow.op_meta_info.input), 1)
         self.assertEqual(len(workflow.op_meta_info.output), 1)
@@ -225,7 +229,7 @@ class WorkflowTest(TestCase):
         json_dict = json.loads('{"header": {}}')
         with self.assertRaises(ValueError) as cm:
             Workflow.from_json_dict(json_dict)
-        self.assertEqual(str(cm.exception), 'missing mandatory property "qualified_name" in Workflow-JSON')
+        self.assertEqual(str(cm.exception), 'missing "id" or "qualified_name" in Workflow-JSON')
 
     def test_to_json_dict(self):
         step1 = OpStep(Op1, node_id='op1')
@@ -243,7 +247,7 @@ class WorkflowTest(TestCase):
 
         expected_json_text = """
         {
-            "qualified_name": "my_workflow",
+            "id": "my_workflow",
             "header": {},
             "input": {
                 "p": {}
@@ -326,7 +330,7 @@ class ExprStepTest(TestCase):
         self.assertEqual(str(node),
                          node.id + ' = "dict(x = 1 + 2 * a, y = 3 * b ** 2 + 4 * c ** 3)"(a=None, b=None, c=None) '
                                    '-> (x, y) [ExprStep]')
-        self.assertEqual(repr(node), "ExprNode('%s', node_id='bibo_8')" % self.expression)
+        self.assertTrue('"id": "bibo_8"' in repr(node))
 
         node = ExprStep(self.expression)
         self.assertEqual(node.op_meta_info.input, {})
@@ -425,11 +429,12 @@ class WorkflowStepTest(TestCase):
     def test_init(self):
         resource = get_resource('workflows/three_ops.json')
         workflow = Workflow.load(resource)
-        step = WorkflowStep(workflow, resource, node_id='jojo_87')
+        step = WorkflowStep(workflow, resource, node_id='jojo_87', node_name='JoJo87')
         self.assertEqual(step.id, 'jojo_87')
         self.assertEqual(step.resource, resource)
-        self.assertEqual(str(step), 'jojo_87 = cool_workflow(p=None) -> (q) [WorkflowStep]')
-        self.assertEqual(repr(step), "WorkflowStep(Workflow('cool_workflow'), '%s', node_id='jojo_87')" % resource)
+        self.assertEqual(str(step), 'JoJo87 = cool_workflow(p=None) -> (q) [WorkflowStep]')
+        self.assertTrue('"id": "jojo_87"' in repr(step))
+        self.assertTrue('"name": "JoJo87"' in repr(step))
 
         self.assertIsNotNone(step.workflow)
         self.assertIn('p', step.workflow.input)
@@ -529,9 +534,12 @@ class WorkflowStepTest(TestCase):
 
 class OpStepTest(TestCase):
     def test_init(self):
-        step = OpStep(Op3)
+        step = OpStep(Op3, node_name='op3_a')
 
-        self.assertRegex(step.id, 'op_step_[0-9]+')
+        self.assertIsNotNone(step.id)
+        self.assertRegex(step.id, 'OpStep_[0-9a-f]{8}$')
+
+        self.assertEqual(step.name, 'op3_a')
 
         self.assertTrue(len(step.input), 2)
         self.assertTrue(len(step.output), 1)
@@ -548,8 +556,9 @@ class OpStepTest(TestCase):
         self.assertIs(step.output.w.node, step)
         self.assertEqual(step.output.w.name, 'w')
 
-        self.assertEqual(str(step), step.id + ' = test.core.test_workflow.Op3(u=None, v=None) -> (w) [OpStep]')
-        self.assertEqual(repr(step), "OpStep(test.core.test_workflow.Op3, node_id='%s')" % step.id)
+        self.assertEqual(str(step), 'op3_a = test.core.test_workflow.Op3(u=None, v=None) -> (w) [OpStep]')
+        self.assertTrue(('"id": "%s"' % step.id) in repr(step))
+        self.assertTrue('"name": "op3_a"' in repr(step))
 
     def test_init_operation_and_name_are_equivalent(self):
         step3 = OpStep(Op3)
@@ -769,7 +778,10 @@ class NoOpStepTest(TestCase):
         step = NoOpStep(input_dict=OrderedDict([('a', {}), ('b', {})]),
                         output_dict=OrderedDict([('c', {}), ('d', {})]))
 
-        self.assertRegex(step.id, 'no_op_step_[0-9]+')
+        self.assertIsNotNone(step.id)
+        self.assertRegex(step.id, 'NoOpStep_[0-9a-f]{8}$')
+
+        self.assertIsNotNone(step.name)
 
         self.assertIsNotNone(step.op_meta_info)
         self.assertEqual(step.op_meta_info.qualified_name, step.id)
@@ -783,8 +795,8 @@ class NoOpStepTest(TestCase):
         self.assertTrue(hasattr(step.output, 'd'))
         self.assertIs(step.output.d.node, step)
 
-        self.assertEqual(str(step), step.id + ' = noop(a=None, b=None) -> (c, d) [NoOpStep]')
-        self.assertEqual(repr(step), "NoOpStep(node_id='%s')" % step.id)
+        self.assertEqual(str(step), step.name + ' = noop(a=None, b=None) -> (c, d) [NoOpStep]')
+        self.assertTrue(('"id": "%s"' % step.id) in repr(step))
 
     def test_invoke(self):
         step = NoOpStep(input_dict=OrderedDict([('a', {}), ('b', {})]),
@@ -841,7 +853,8 @@ class SubProcessStepTest(TestCase):
         step = SubProcessStep(['cd', '{{dir}}'],
                               input_dict=OrderedDict(dir=dict(data_type=str)))
 
-        self.assertRegex(step.id, 'sub_process_step_[0-9]+')
+        self.assertIsNotNone(step.id)
+        self.assertRegex(step.id, 'SubProcessStep_[0-9a-f]{8}$')
 
         self.assertIsNotNone(step.op_meta_info)
         self.assertEqual(step.op_meta_info.qualified_name, step.id)
@@ -855,8 +868,8 @@ class SubProcessStepTest(TestCase):
         self.assertTrue(hasattr(step.output, 'return'))
         self.assertIs(step.output['return'].node, step)
 
-        self.assertEqual(str(step), step.id + ' = "cd {{dir}}"(dir=None) [SubProcessStep]')
-        self.assertEqual(repr(step), "SubProcessStep(['cd', '{{dir}}'], node_id='%s')" % step.id)
+        self.assertEqual(str(step), step.name + ' = "cd {{dir}}"(dir=None) [SubProcessStep]')
+        self.assertTrue(('"id": "%s"' % step.id) in repr(step))
 
     def test_invoke(self):
         step = SubProcessStep(['cd', '{{dir}}'],
@@ -903,7 +916,7 @@ class NodePortTest(TestCase):
         self.assertEqual(source.source, None)
         self.assertEqual(source.value, None)
         self.assertEqual(str(source), 'myop.x')
-        self.assertEqual(repr(source), "NodePort('myop', 'x')")
+        self.assertEqual(repr(source), "{}")
 
     def test_resolve_source_ref(self):
         step1 = OpStep(Op1, node_id='myop1')

@@ -99,6 +99,11 @@ class WorkspaceManager(metaclass=ABCMeta):
         pass
 
     @abstractmethod
+    def rename_workspace_resource(self, base_dir: str,
+                                  res_name: str, res_name_new: str) -> Workspace:
+        pass
+
+    @abstractmethod
     def delete_workspace_resource(self, base_dir: str, res_name: str) -> Workspace:
         pass
 
@@ -301,6 +306,12 @@ class FSWorkspaceManager(WorkspaceManager):
         workspace.execute_workflow(res_name=res_name, monitor=monitor)
         return workspace
 
+    def rename_workspace_resource(self, base_dir: str,
+                                  res_name: str, res_name_new: str) -> Workspace:
+        workspace = self.get_workspace(base_dir)
+        workspace.rename_resource(res_name, res_name_new)
+        return workspace
+
     def delete_workspace_resource(self, base_dir: str, res_name: str) -> Workspace:
         workspace = self.get_workspace(base_dir)
         workspace.delete_resource(res_name)
@@ -364,7 +375,7 @@ class FSWorkspaceManager(WorkspaceManager):
         value = UNDEFINED
         if res_name_or_expr is None:
             value = workspace.resource_cache
-        elif res_name_or_expr.isidentifier() and workspace.workflow.find_node(res_name_or_expr) is not None:
+        elif res_name_or_expr.isidentifier() and workspace.workflow.find_node_by_name(res_name_or_expr) is not None:
             value = workspace.execute_workflow(res_name=res_name_or_expr, monitor=monitor)
         if value is UNDEFINED:
             value = eval(res_name_or_expr, None, workspace.resource_cache)
