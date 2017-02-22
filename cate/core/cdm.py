@@ -19,6 +19,9 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+__author__ = "Norman Fomferra (Brockmann Consult GmbH)," \
+             "Janis Gailis (S[&]T Norway)"
+
 """
 Description
 ===========
@@ -108,9 +111,11 @@ Components
 """
 
 from collections import OrderedDict
-from typing import List
+from typing import List, Optional, Sequence, Union
+import xarray as xr
 
-from cate.core.util import object_to_qualified_name, qualified_name_to_object
+
+from cate.util.misc import object_to_qualified_name, qualified_name_to_object
 
 
 class Schema:
@@ -313,3 +318,28 @@ class Schema:
             # TODO (nf, 20160627): convert self.value to JSON value
             json_dict['value'] = self.value
             return json_dict
+
+
+def get_lon_dim_name(ds: Union[xr.Dataset, xr.DataArray]) -> Optional[str]:
+    """
+    Get the name of the longitude dimension.
+    :param ds: An xarray Dataset
+    :return: the name or None
+    """
+    return _get_dim_name(ds, ['lon', 'longitude', 'long'])
+
+
+def get_lat_dim_name(ds: Union[xr.Dataset, xr.DataArray]) -> Optional[str]:
+    """
+    Get the name of the latitude dimension.
+    :param ds: An xarray Dataset
+    :return: the name or None
+    """
+    return _get_dim_name(ds, ['lat', 'latitude'])
+
+
+def _get_dim_name(ds: Union[xr.Dataset, xr.DataArray], possible_names: Sequence[str]) -> Optional[str]:
+    for name in possible_names:
+        if name in ds.dims:
+            return name
+    return None

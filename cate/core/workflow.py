@@ -1,5 +1,5 @@
 # The MIT License (MIT)
-# Copyright (c) 2016 by the Cate Development Team and contributors
+# Copyright (c) 2017 by the Cate Development Team and contributors
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy of
 # this software and associated documentation files (the "Software"), to deal in
@@ -18,6 +18,8 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
+
+__author__ = "Norman Fomferra (Brockmann Consult GmbH)"
 
 """
 Description
@@ -119,9 +121,10 @@ from io import IOBase
 from itertools import chain
 from typing import Sequence, Optional, Union, List, Dict
 
-from .monitor import Monitor
-from .op import OP_REGISTRY, OpMetaInfo, OpRegistration
-from .util import Namespace, UNDEFINED
+from cate.util import Namespace, UNDEFINED
+from cate.util.monitor import Monitor
+from .op import OP_REGISTRY, OpRegistration
+from cate.util.opmetainf import OpMetaInfo
 from .workflow_svg import Drawing as _Drawing
 from .workflow_svg import Graph as _Graph
 from .workflow_svg import Node as _Node
@@ -181,11 +184,11 @@ class Node(metaclass=ABCMeta):
         return node
 
     @property
-    def parent_node(self) -> 'Node':
+    def parent_node(self) -> Optional['Node']:
         """The node's parent node or ``None`` if this node has no parent."""
         return None
 
-    def find_node(self, node_id) -> 'Node':
+    def find_node(self, node_id) -> Optional['Node']:
         """Find a (child) node with the given *node_id*."""
         return None
 
@@ -314,7 +317,7 @@ class Node(metaclass=ABCMeta):
             if port.source is not None and port.source.node is orphaned_node:
                 port.value = None
 
-    def find_port(self, name) -> 'NodePort':
+    def find_port(self, name) -> Optional['NodePort']:
         """
         Find port with given name. Output ports are searched first, then input ports.
         :param name: The port name
@@ -326,7 +329,7 @@ class Node(metaclass=ABCMeta):
             return self._input[name]
         return None
 
-    def _body_string(self) -> str:
+    def _body_string(self) -> Optional[str]:
         return None
 
     def _format_port_assignments(self, namespace: Namespace, is_input: bool):
@@ -403,7 +406,7 @@ class Workflow(Node):
         step.collect_predecessors(steps, [self])
         return steps
 
-    def find_node(self, step_id: str) -> 'Step':
+    def find_node(self, step_id: str) -> Optional['Step']:
         # is it the ID of one of the direct children?
         if step_id in self._steps:
             return self._steps[step_id]
@@ -418,7 +421,7 @@ class Workflow(Node):
         for step in steps:
             self.add_step(step, can_exist=can_exist)
 
-    def add_step(self, step: 'Step', can_exist: bool = False) -> 'Step':
+    def add_step(self, step: 'Step', can_exist: bool = False) -> Optional['Step']:
         old_step = self._steps.get(step.id)
         if old_step is not None and not can_exist:
             raise ValueError("step '%s' already exists" % step.id)
@@ -429,15 +432,16 @@ class Workflow(Node):
 
         step._parent_node = self
 
-        if is_new and old_step is not None:
+        if is_new and (old_step is not None):
             # If the step already existed before, we must resolve source references again
             self.resolve_source_refs()
             # After reassigning sources, remove ports whose source is still old_step.
+            # noinspection PyTypeChecker
             self.remove_orphaned_sources(old_step)
 
         return old_step
 
-    def remove_step(self, step: Union[str, 'Step'], must_exist: bool = False) -> 'Step':
+    def remove_step(self, step: Union[str, 'Step'], must_exist: bool = False) -> Optional['Step']:
         step_id = step if isinstance(step, str) else step.id
         if step_id not in self._steps:
             if must_exist:
@@ -490,7 +494,7 @@ class Workflow(Node):
             monitor_label = monitor_label or "Executing {step_count} workflow step(s)"
             with monitor.starting(monitor_label.format(step_count=step_count), step_count):
                 for step in steps:
-                    step.invoke(value_cache=value_cache, monitor=monitor.child(1))
+                    step.invoke(value_cache=value_cache, monitor=monitor.child(work=1))
 
     @classmethod
     def load(cls, file_path_or_fp: Union[str, IOBase], registry=OP_REGISTRY) -> 'Workflow':
@@ -1004,7 +1008,8 @@ class SubProcessStep(Step):
             op_meta_info.output[op_meta_info.RETURN_OUTPUT_NAME] = {}
         super(SubProcessStep, self).__init__(op_meta_info, node_id)
         self._sub_process_arguments = sub_process_arguments
-        self._environment_variables = dict(environment_variables) if environment_variables else {}
+        # noinspection PyArgumentList
+        self._environment_variables = dict(**environment_variables) if environment_variables else {}
         self._working_directory = working_directory
 
     @property
@@ -1054,8 +1059,8 @@ class SubProcessStep(Step):
     @classmethod
     def new_step_from_json_dict(cls, json_dict, registry=OP_REGISTRY):
         sub_process_arguments = json_dict.get('sub_process_arguments', None)
-        working_directory = json_dict.get('working_directory', None)
-        environment_variables = json_dict.get('environment_variables', None)
+        # working_directory = json_dict.get('working_directory', None)
+        # environment_variables = json_dict.get('environment_variables', None)
         if sub_process_arguments is None:
             return None
         return cls(sub_process_arguments, node_id=json_dict.get('id', None))
@@ -1090,7 +1095,7 @@ class NodePort:
         return self._node
 
     @property
-    def node_id(self) -> Node:
+    def node_id(self) -> str:
         return self._node.id
 
     @property
